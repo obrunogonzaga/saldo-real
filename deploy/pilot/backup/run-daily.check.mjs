@@ -61,8 +61,8 @@ esac
   assert.equal(result.stdout.includes("Off-host backup verified"), !failRclone && !missingMonitor);
 }
 
-function operationsScenario(failDocker) {
-  const dir = join(root, failDocker ? "ops-failure" : "ops-success");
+function operationsScenario(scenarioName) {
+  const dir = join(root, `ops-${scenarioName}`);
   const bin = join(dir, "bin");
   const scriptDir = join(dir, "backup");
   mkdirSync(bin, { recursive: true });
@@ -82,15 +82,113 @@ case "$config" in
   *) echo success >> "$TEST_EVENTS" ;;
 esac
 `);
-  executable(join(bin, "docker"), 'echo docker >> "$TEST_EVENTS"; if [ "$FAIL_DOCKER" = 1 ]; then exit 2; fi');
+
+  const stubScript = join(dir, "fetch-stub.mjs");
+  writeFileSync(stubScript, `
+const origTimeout = AbortSignal.timeout.bind(AbortSignal);
+AbortSignal.timeout = (ms) => origTimeout(20);
+
+globalThis.fetch = async (url, options = {}) => {
+  const mode = process.env.OPS_SCENARIO;
+  if (mode === "fetch-timeout") {
+    return new Promise((resolve, reject) => {
+      const timer = setInterval(() => {}, 1000);
+      if (options.signal) {
+        if (options.signal.aborted) {
+          clearInterval(timer);
+          reject(options.signal.reason);
+        } else {
+          options.signal.addEventListener("abort", () => {
+            clearInterval(timer);
+            reject(options.signal.reason);
+          }, { once: true });
+        }
+      }
+    });
+  }
+  if (mode === "http-503") {
+    return { ok: false, status: 503 };
+  }
+  return { ok: true, status: 200 };
+};
+`);
+
+  const dockerScript = join(bin, "docker");
+  writeFileSync(dockerScript, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+const args = process.argv.slice(2);
+const events = process.env.TEST_EVENTS;
+const scenario = process.env.OPS_SCENARIO;
+
+const isWebExec = args.includes("exec") && args.includes("web");
+const isOpsRun = args.includes("run") && args.includes("ops");
+
+if (isWebExec) {
+  appendFileSync(events, "web\\n");
+  if (scenario === "web-stopped") {
+    process.stderr.write("Container web is not running\\n");
+    process.exit(1);
+  }
+  const nodeIdx = args.indexOf("node");
+  const code = (nodeIdx !== -1 && args[nodeIdx + 1] === "-e") ? args[nodeIdx + 2] : "";
+  const res = spawnSync(process.execPath, [
+    "--import", ${JSON.stringify(stubScript)},
+    "-e", code
+  ], { stdio: "inherit", env: process.env });
+  process.exit(res.status ?? 1);
+}
+
+if (isOpsRun) {
+  appendFileSync(events, "db\\n");
+  if (scenario === "db-failure") {
+    process.stderr.write("DB check failed\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+process.stderr.write("Unknown docker command: " + args.join(" ") + "\\n");
+process.exit(1);
+`, { mode: 0o700 });
+
   const result = spawnSync(join(scriptDir, "run-ops-check.sh"), [], {
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`,
-      LIQUIDO_OPS_HEALTHCHECK_FILE: healthFile, TEST_EVENTS: events, FAIL_DOCKER: failDocker ? "1" : "0" },
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      LIQUIDO_OPS_HEALTHCHECK_FILE: healthFile,
+      TEST_EVENTS: events,
+      OPS_SCENARIO: scenarioName,
+    },
     encoding: "utf8",
   });
-  assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"),
-    failDocker ? ["start", "docker", "fail"] : ["start", "docker", "success"]);
-  assert.equal(result.status === 0, !failDocker);
+
+  const calls = readFileSync(events, "utf8").trim().split("\n");
+  if (scenarioName === "success") {
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Operations check passed\./);
+    assert.equal(calls.includes("success"), true);
+    assert.equal(calls.includes("fail"), false);
+    assert.equal(calls.includes("web"), true);
+    assert.equal(calls.includes("db"), true);
+    assert.equal(calls.indexOf("web") < calls.indexOf("db"), true);
+    assert.deepEqual(calls, ["start", "web", "db", "success"]);
+  } else {
+    assert.notEqual(result.status, 0);
+    assert.equal(calls.includes("success"), false);
+    assert.equal(calls.includes("fail"), true);
+    if (["web-stopped", "http-503", "fetch-timeout"].includes(scenarioName)) {
+      assert.equal(calls.includes("web"), true);
+      assert.equal(calls.includes("db"), false);
+      assert.deepEqual(calls, ["start", "web", "fail"]);
+    } else if (scenarioName === "db-failure") {
+      assert.equal(calls.includes("web"), true);
+      assert.equal(calls.includes("db"), true);
+      assert.equal(calls.indexOf("web") < calls.indexOf("db"), true);
+      assert.deepEqual(calls, ["start", "web", "db", "fail"]);
+    }
+  }
 }
 
 function offsiteRestoreScenario() {
@@ -123,8 +221,11 @@ try {
   scenario(false);
   scenario(true);
   scenario(false, true);
-  operationsScenario(false);
-  operationsScenario(true);
+  operationsScenario("success");
+  operationsScenario("web-stopped");
+  operationsScenario("http-503");
+  operationsScenario("fetch-timeout");
+  operationsScenario("db-failure");
   offsiteRestoreScenario();
   console.log("Backup shipping, operations alert and off-host restore paths passed.");
 } finally {

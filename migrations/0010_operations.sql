@@ -71,10 +71,23 @@ UNION ALL SELECT 'csv_confirmed', user_id, confirmed_at
 UNION ALL SELECT 'reprice_confirmed', user_id, confirmed_at
   FROM catalog_batch_reprice_preview WHERE confirmed_at IS NOT NULL
 UNION ALL SELECT 'checkout_started', user_id, created_at FROM billing_order
-UNION ALL SELECT 'payment_confirmed', user_id, updated_at
-  FROM billing_payment_cycle WHERE state = 'confirmed' AND is_initial
-UNION ALL SELECT 'renewal_confirmed', user_id, updated_at
-  FROM billing_payment_cycle WHERE state = 'confirmed' AND NOT is_initial
+UNION ALL SELECT
+  CASE WHEN c.is_initial THEN 'payment_confirmed' ELSE 'renewal_confirmed' END,
+  c.user_id,
+  p.occurred_at
+  FROM billing_payment_cycle c
+  LEFT JOIN billing_order o ON o.id = c.order_id
+  CROSS JOIN LATERAL (
+    SELECT LEAST(
+      MIN(e.received_at),
+      CASE WHEN c.is_initial THEN o.paid_at END
+    ) AS occurred_at
+    FROM billing_payment_event e
+    WHERE e.payment_id = c.payment_id
+      AND e.event_type IN ('PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED')
+      AND e.outcome IN ('confirmed', 'paid_duplicate_financial')
+  ) p
+  WHERE p.occurred_at IS NOT NULL
 UNION ALL SELECT 'payment_overdue', c.user_id, e.received_at
   FROM billing_payment_event e JOIN billing_payment_cycle c ON c.payment_id = e.payment_id
   WHERE e.event_type IN ('PAYMENT_OVERDUE', 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED')

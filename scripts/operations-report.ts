@@ -50,12 +50,12 @@ export async function report(pool: Pool, since: string, accountId?: string) {
     const financial = await client.query(`
       WITH cycles AS (
         SELECT c.user_id, c.state, c.is_initial, b.method, b.amount_cents,
-          COALESCE((SELECT min(e.received_at) FROM billing_payment_event e
+          LEAST((SELECT min(e.received_at) FROM billing_payment_event e
             WHERE e.payment_id = c.payment_id AND e.event_type IN ('PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED')
               AND e.outcome IN ('confirmed', 'paid_duplicate_financial')),
             CASE WHEN c.is_initial THEN b.paid_at END) AS first_confirmed_at,
           EXISTS (SELECT 1 FROM billing_payment_event e WHERE e.payment_id = c.payment_id
-            AND e.event_type = 'PAYMENT_RECEIVED' AND e.outcome = 'confirmed') AS received
+            AND e.event_type = 'PAYMENT_RECEIVED' AND e.outcome IN ('confirmed', 'paid_duplicate_financial')) AS received
         FROM billing_payment_cycle c JOIN billing_order b ON b.id = c.order_id
         WHERE ($2::TEXT IS NULL OR c.user_id = $2)
       )
