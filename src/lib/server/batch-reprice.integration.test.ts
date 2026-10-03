@@ -218,53 +218,65 @@ suite("batch reprice integration", () => {
   });
 
   it("createBatchRepricePreview_dropOffFixedFee_requiresManualRule", async () => {
-    const actor = await createActor("batch-dropoff-fee");
-    const input = productInput("DROP-OFF", { channelId: "mercado_livre" });
-    input.draft.tariffMode = "ml_drop_off";
-    input.draft.confirmedDropOff = true;
-    input.draft.input.fixedFee = 0;
-    const product = await createProduct(actor, input);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T12:00:00Z"));
+    try {
+      const actor = await createActor("batch-dropoff-fee");
+      const input = productInput("DROP-OFF", { channelId: "mercado_livre" });
+      input.draft.tariffMode = "ml_drop_off";
+      input.draft.confirmedDropOff = true;
+      input.draft.input.fixedFee = 0;
+      const product = await createProduct(actor, input);
 
-    const blocked = await createBatchRepricePreview(actor, {
-      ids: [product.id],
-      changes: { fixedFee: 7 },
-    });
-    const manual = await createBatchRepricePreview(actor, {
-      ids: [product.id],
-      changes: { tariffMode: "manual", fixedFee: 7 },
-    });
+      const blocked = await createBatchRepricePreview(actor, {
+        ids: [product.id],
+        changes: { fixedFee: 7 },
+      });
+      const manual = await createBatchRepricePreview(actor, {
+        ids: [product.id],
+        changes: { tariffMode: "manual", fixedFee: 7 },
+      });
 
-    expect(blocked).toMatchObject({ validCount: 0, invalidCount: 1 });
-    expect(blocked.rows[0]?.errors.join(" ")).toContain("regra manual");
-    expect(manual).toMatchObject({ validCount: 1, invalidCount: 0 });
+      expect(blocked).toMatchObject({ validCount: 0, invalidCount: 1 });
+      expect(blocked.rows[0]?.errors.join(" ")).toContain("regra manual");
+      expect(manual).toMatchObject({ validCount: 1, invalidCount: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("createBatchRepricePreview_tariffChange_requiresExplicitCompatibleConfirmation", async () => {
-    const actor = await createActor("batch-tariff");
-    const shopee = await createProduct(actor, productInput("SHOPEE"));
-    const mercadoLivre = await createProduct(
-      actor,
-      productInput("ML", { channelId: "mercado_livre" }),
-    );
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T12:00:00Z"));
+    try {
+      const actor = await createActor("batch-tariff");
+      const shopee = await createProduct(actor, productInput("SHOPEE"));
+      const mercadoLivre = await createProduct(
+        actor,
+        productInput("ML", { channelId: "mercado_livre" }),
+      );
 
-    await expect(
-      createBatchRepricePreview(actor, {
+      await expect(
+        createBatchRepricePreview(actor, {
+          ids: [mercadoLivre.id],
+          changes: { tariffMode: "ml_drop_off" },
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_PRODUCT" });
+
+      const invalidChannel = await createBatchRepricePreview(actor, {
+        ids: [shopee.id],
+        changes: { tariffMode: "ml_drop_off", confirmedDropOff: true },
+      });
+      const validChange = await createBatchRepricePreview(actor, {
         ids: [mercadoLivre.id],
-        changes: { tariffMode: "ml_drop_off" },
-      }),
-    ).rejects.toMatchObject({ code: "INVALID_PRODUCT" });
+        changes: { tariffMode: "ml_drop_off", confirmedDropOff: true },
+      });
 
-    const invalidChannel = await createBatchRepricePreview(actor, {
-      ids: [shopee.id],
-      changes: { tariffMode: "ml_drop_off", confirmedDropOff: true },
-    });
-    const validChange = await createBatchRepricePreview(actor, {
-      ids: [mercadoLivre.id],
-      changes: { tariffMode: "ml_drop_off", confirmedDropOff: true },
-    });
-
-    expect(invalidChannel.rows[0]?.errors.join(" ")).toContain("Mercado Livre");
-    expect(validChange.rows[0]).toMatchObject({ errors: [] });
+      expect(invalidChannel.rows[0]?.errors.join(" ")).toContain("Mercado Livre");
+      expect(validChange.rows[0]).toMatchObject({ errors: [] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("createBatchRepricePreview_freePlanAndForeignId_doNotExposeProducts", async () => {

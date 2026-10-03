@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import nodemailer, { type Transporter } from "nodemailer";
 import { siteName } from "@/lib/site";
+import { recordOperationalFailure } from "./operational-failures";
 
 interface SmtpConfiguration {
   host: string;
@@ -145,6 +146,7 @@ async function sendAuthEmail(
       html,
     });
   } catch {
+    await recordOperationalFailure("email");
     throw new Error("Não foi possível enviar o e-mail. Tente novamente.");
   }
 }

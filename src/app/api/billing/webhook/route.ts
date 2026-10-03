@@ -18,6 +18,7 @@ import {
   billingResponse,
   readBillingBody,
 } from "../api";
+import { recordOperationalFailure } from "@/lib/server/operational-failures";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest) {
 
     return billingResponse({ received: true, ...result });
   } catch (error) {
+    await recordOperationalFailure("webhook");
     if (error instanceof SubscriptionPaymentWebhookError) {
       return billingResponse({ error: error.message, code: error.code },
         error.code === "RETRY" ? 503 : 422);

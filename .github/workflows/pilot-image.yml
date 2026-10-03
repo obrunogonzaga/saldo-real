@@ -17,10 +17,13 @@ jobs:
           printf 'dummy-db-only\n' > deploy/pilot/secrets/postgres_password
           printf 'dummy-auth-secret-at-least-32-characters\n' > deploy/pilot/secrets/auth_secret
           printf 'dummy-resend-only\n' > deploy/pilot/secrets/resend_api_key
+          printf 'dummy-ops-only\n' > deploy/pilot/secrets/ops_postgres_password
           LIQUIDO_IMAGE_TAG=ci LIQUIDO_BASIC_AUTH='pilot:$2y$05$abcdefghijklmnopqrstuv' \
             PILOT_ALLOWED_EMAILS=owner@example.test docker compose \
             -f deploy/pilot/compose.yaml -f deploy/pilot/compose.database.yaml \
             -f deploy/pilot/compose.accounts.yaml --profile migrate config --quiet
+      - name: Verify backup shipping failure handling
+        run: node deploy/pilot/backup/run-daily.check.mjs
       - name: Build image
         run: docker build -t liquido-pilot:ci .
       - name: Build account image
@@ -40,6 +43,21 @@ jobs:
             -f deploy/pilot/compose.accounts.yaml --profile migrate build migrator
           docker compose -f deploy/pilot/compose.yaml -f deploy/pilot/compose.database.yaml \
             -f deploy/pilot/compose.accounts.yaml --profile migrate run --rm migrator
+          docker compose -f deploy/pilot/compose.yaml -f deploy/pilot/compose.database.yaml \
+            exec -T db psql -U liquido -d liquido <<'SQL'
+          CREATE ROLE liquido_ops_readonly LOGIN NOINHERIT PASSWORD 'dummy-ops-only';
+          GRANT CONNECT ON DATABASE liquido TO liquido_ops_readonly;
+          GRANT USAGE ON SCHEMA public TO liquido_ops_readonly;
+          GRANT SELECT ON operational_funnel_event, billing_payment_cycle, billing_order,
+            billing_payment_event, access_change_audit, operational_failure_event TO liquido_ops_readonly;
+          GRANT SELECT (id, "emailVerified") ON "user" TO liquido_ops_readonly;
+          GRANT SELECT (user_id, plan, expires_at) ON account_entitlement TO liquido_ops_readonly;
+          SQL
+          docker compose -f deploy/pilot/compose.yaml -f deploy/pilot/compose.database.yaml \
+            -f deploy/pilot/compose.accounts.yaml --profile ops build ops
+          docker compose -f deploy/pilot/compose.yaml -f deploy/pilot/compose.database.yaml \
+            -f deploy/pilot/compose.accounts.yaml --profile ops run --rm --no-deps ops \
+            --since="$(date -u +%F)"
           deploy/pilot/backup/backup.sh
           dump_file=$(find /opt/stacks/liquido-pilot/backups -maxdepth 1 -name 'liquido-*.dump' | sort | tail -1)
           test -n "$dump_file"

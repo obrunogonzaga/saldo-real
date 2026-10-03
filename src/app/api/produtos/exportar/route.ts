@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { createCatalogExport } from "@/lib/catalog-export";
 import { ProductValidationError } from "@/lib/products";
 import { listProducts } from "@/lib/server/products";
+import { recordCatalogExport } from "@/lib/server/operational-actions";
 import {
   authIsEnabled,
   getVerifiedUserId,
@@ -51,7 +52,9 @@ export async function POST(request: NextRequest) {
       : products;
     if (ids && selected.length !== ids.length)
       return noStoreResponse({ error: "Produto não encontrado." }, 404);
-    return new Response(createCatalogExport(selected), {
+    const csv = createCatalogExport(selected);
+    await recordCatalogExport(userId);
+    return new Response(csv, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",

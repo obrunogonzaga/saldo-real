@@ -11,6 +11,7 @@ import {
 } from "@/lib/pricing";
 import { parseBRNumber } from "@/lib/numbers";
 import { DRAFT_KEY, type SimulationDraft } from "@/lib/simulation-draft";
+import { classifyOrigin, recordBrowserEvent } from "@/lib/operational-telemetry";
 import {
   isRuleCurrent,
   mlDropOffRule,
@@ -80,6 +81,11 @@ export function Calculator({
   useEffect(() => {
     if (snapshot) resultRef.current?.focus();
   }, [snapshot]);
+  useEffect(() => {
+    if (!accountMode) {
+      recordBrowserEvent("origin", classifyOrigin(document.referrer, window.location.origin));
+    }
+  }, [accountMode]);
 
   function invalidate() {
     revision.current++;
@@ -195,7 +201,9 @@ export function Calculator({
             : []),
         ],
       });
+      recordBrowserEvent("calculation", "internal");
     } catch (e) {
+      recordBrowserEvent("calculation_error", "internal");
       setError(
         e instanceof Error
           ? e.message

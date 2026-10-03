@@ -8,6 +8,17 @@ fi
 
 dump_file=$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")
 backup_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+started_at=$(date -u +%s)
+if dump_modified_at=$(stat -c %Y -- "$dump_file" 2>/dev/null); then
+  :
+else
+  dump_modified_at=$(stat -f %m -- "$dump_file")
+fi
+dump_age_seconds=$((started_at - dump_modified_at))
+if [ "$dump_age_seconds" -lt 0 ]; then
+  echo "Dump modification time is in the future; cannot report its age." >&2
+  exit 1
+fi
 umask 077
 RESTORE_TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/liquido-restore.XXXXXXXX")
 export RESTORE_TEST_DIR
@@ -43,4 +54,13 @@ if [ "$table_count" -lt 1 ]; then
   exit 1
 fi
 
-echo "Disposable restore verified: $table_count public tables."
+# Query representative account, simulation, catalog and billing data without printing rows.
+docker compose --project-directory "$backup_dir" -f "$backup_dir/compose.restore.yaml" \
+  -p "$project" exec -T restore-db \
+  psql --username=postgres --dbname=restore_test --set=ON_ERROR_STOP=1 \
+  --tuples-only --no-align --command='SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM saved_simulation), (SELECT count(*) FROM catalog_product), (SELECT count(*) FROM billing_order)' \
+  > /dev/null
+
+completed_at=$(date -u +%s)
+echo "Disposable restore verified: $table_count public tables; representative account, simulation, catalog and billing queries passed."
+echo "Dump age at restore start (RPO proxy from file modification time): $dump_age_seconds seconds; restore verification duration: $((completed_at - started_at)) seconds."

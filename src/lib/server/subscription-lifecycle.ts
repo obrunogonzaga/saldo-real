@@ -41,6 +41,7 @@ async function transaction<T>(work: (client: PoolClient) => Promise<T>): Promise
   const client = await getDb().connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.access_actor', 'billing_reconciliation', TRUE), set_config('app.access_reason', 'verified_provider_state', TRUE)");
     const result = await work(client);
     await client.query("COMMIT");
     return result;

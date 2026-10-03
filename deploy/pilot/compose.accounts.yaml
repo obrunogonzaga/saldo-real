@@ -44,8 +44,39 @@ services:
     entrypoint: ["node", "/opt/liquido/start-web.mjs"]
     command: ["npm", "run", "db:migrate"]
 
+  ops:
+    profiles: [ops]
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: build
+      args:
+        AUTH_ENABLED: "true"
+    image: liquido-pilot-ops:${LIQUIDO_IMAGE_TAG:?Set the reviewed commit SHA}
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      APP_ENV: production
+      npm_config_cache: /tmp/npm-cache
+    depends_on:
+      db:
+        condition: service_healthy
+    secrets:
+      - pilot_ops_db_password
+    volumes:
+      - ./backup/start-ops.mjs:/opt/liquido/start-ops.mjs:ro
+    networks:
+      - database
+    labels:
+      traefik.enable: "false"
+    entrypoint: ["node", "/opt/liquido/start-ops.mjs"]
+
 secrets:
   pilot_auth_secret:
     file: ./secrets/auth_secret
   pilot_resend_api_key:
     file: ./secrets/resend_api_key
+  pilot_ops_db_password:
+    file: ./secrets/ops_postgres_password

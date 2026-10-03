@@ -83,6 +83,7 @@ export async function processSubscriptionWebhook(value: unknown): Promise<{
   let email: { recipient: string; paidUntil: Date } | undefined;
   try {
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.access_actor', 'subscription_webhook', TRUE), set_config('app.access_reason', 'verified_subscription_event', TRUE)");
     const discovered = await client.query<{ id: string; user_id: string }>(
       "SELECT id, user_id FROM billing_order WHERE subscription_id = $1 AND method = 'card'",
       [subscription.id],
@@ -369,6 +370,7 @@ export async function processSubscriptionPaymentWebhook(
   const client = await getDb().connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.access_actor', 'payment_webhook', TRUE), set_config('app.access_reason', 'verified_payment_event', TRUE)");
     const lookup = await client.query<Order>(`
       SELECT id, user_id, checkout_id, subscription_id, initial_payment_id,
         period_end, amount_cents, currency, status, method

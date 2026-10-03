@@ -325,6 +325,7 @@ async function withTransaction<T>(
 
   try {
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.access_actor', 'billing_service', TRUE), set_config('app.access_reason', 'verified_checkout_state', TRUE)");
     const result = await action(client);
     await client.query("COMMIT");
     return result;
